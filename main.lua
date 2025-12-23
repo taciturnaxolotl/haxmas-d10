@@ -5,9 +5,15 @@ local player = {
     height = 1,
     velocityY = 0,
     isJumping = false,
+    isSliding = false,
+    wantsToSlide = false,
+    slideTimer = 0,
+    maxSlideTime = 3,
     hitboxPadding = 8,
     animationFrame = 0,
-    animationTimer = 0
+    animationTimer = 0,
+    normalHeight = 1,
+    slideHeight = 1
 }
 
 local ground = { y = 0, height = 40 }
@@ -20,6 +26,9 @@ local highScore = 0
 local gameOver = false
 local gravity = 1200
 local jumpForce = -500
+local showHitboxes = false
+
+local sprite = require "sprite"
 
 local images = {}
 local dinoScale = 1
@@ -30,17 +39,23 @@ local pterodactylAnimationFrame = 0
 
 function love.load()
     love.window.setTitle("Haxmas Runner :3")
+    love.graphics.setDefaultFilter("nearest", "nearest")
     
     images.dino = love.graphics.newImage("assets/dino.png")
-    images.dinoRunning = love.graphics.newImage("assets/dino_running_sheet.png")
+    images.dinoSheet = love.graphics.newImage("assets/dino-sheet.png")
     images.cactus = love.graphics.newImage("assets/cactus.png")
     images.pterodactyl = love.graphics.newImage("assets/pterodactyl.png")
     
     local targetHeight = 80
     dinoScale = targetHeight / images.dino:getHeight()
-    dinoRunningScale = targetHeight / images.dinoRunning:getHeight()
-    player.width = (images.dinoRunning:getWidth() / 2) * dinoRunningScale
-    player.height = targetHeight
+    
+    -- Sprite sheet is 4 frames: 2 running, 2 sliding
+    -- Each frame is 22 wide x 20 tall
+    dinoRunningScale = targetHeight / 20
+    player.width = 22 * dinoRunningScale
+    player.normalHeight = targetHeight
+    player.slideHeight = targetHeight * 0.5
+    player.height = player.normalHeight
 
     ground.y = love.graphics.getHeight() - ground.height
     player.y = ground.y - player.height + 1
@@ -57,6 +72,19 @@ function love.update(dt)
     gameSpeed = 300 + score * 0.5
 
     if not player.isJumping then
+        -- Handle slide timer
+        if player.isSliding then
+            player.slideTimer = player.slideTimer + dt
+            if player.slideTimer >= player.maxSlideTime then
+                player.isSliding = false
+                player.slideTimer = 0
+            end
+            player.height = player.slideHeight
+        else
+            player.height = player.normalHeight
+            player.slideTimer = 0
+        end
+        
         player.animationTimer = player.animationTimer + dt
         if player.animationTimer >= 0.1 then
             player.animationTimer = 0
@@ -78,6 +106,11 @@ function love.update(dt)
             player.y = ground.y - player.height + 1
             player.isJumping = false
             player.velocityY = 0
+            
+            -- Start sliding if player wanted to slide during jump
+            if player.wantsToSlide then
+                player.isSliding = true
+            end
         end
     end
 
@@ -113,17 +146,25 @@ function love.draw()
 
     love.graphics.setColor(1, 1, 1)
 
+    -- 5 frames total: 0-1 running, 2-3 sliding, 4 jumping
+    local frameIndex
     if player.isJumping then
-        love.graphics.draw(images.dino, player.x, player.y, 0, dinoScale, dinoScale)
+        frameIndex = 4
+    elseif player.isSliding then
+        frameIndex = 2 + player.animationFrame
     else
-        local frameWidth = images.dinoRunning:getWidth() / 2
-        local quad = love.graphics.newQuad(
-            player.animationFrame * frameWidth, 0,
-            frameWidth, images.dinoRunning:getHeight(),
-            images.dinoRunning:getDimensions()
-        )
-        love.graphics.draw(images.dinoRunning, quad, player.x, player.y, 0, dinoRunningScale, dinoRunningScale)
+        frameIndex = player.animationFrame
     end
+    
+    local frameWidth = 22
+    local frameHeight = 20
+    local quad = love.graphics.newQuad(
+        frameIndex * frameWidth, 0,
+        frameWidth, frameHeight,
+        images.dinoSheet:getDimensions()
+    )
+    
+    love.graphics.draw(images.dinoSheet, quad, player.x, player.y, 0, dinoRunningScale, dinoRunningScale)
 
     for _, obs in ipairs(obstacles) do
         if obs.type == "pterodactyl" then
@@ -139,6 +180,32 @@ function love.draw()
                 obs.width / images.cactus:getWidth(),
                 obs.height / images.cactus:getHeight())
         end
+        
+        -- Draw obstacle hitbox
+        if showHitboxes then
+            love.graphics.setColor(1, 0, 0, 0.5)
+            love.graphics.rectangle("line", obs.x, obs.y, obs.width, obs.height)
+            love.graphics.setColor(1, 1, 1)
+        end
+    end
+    
+    -- Draw player hitbox
+    if showHitboxes then
+        local padding = player.hitboxPadding
+        local topPadding = padding
+        
+        -- When sliding, reduce top hitbox by additional 3px
+        if player.isSliding then
+            topPadding = padding + 3 * dinoRunningScale
+        end
+        
+        love.graphics.setColor(0, 1, 0, 0.5)
+        love.graphics.rectangle("line", 
+            player.x + padding, 
+            player.y + topPadding, 
+            player.width - padding * 2, 
+            player.height - topPadding - padding)
+        love.graphics.setColor(1, 1, 1)
     end
  
     love.graphics.setColor(0, 0, 0)
@@ -162,11 +229,34 @@ function love.keypressed(key)
         elseif not player.isJumping then
             player.isJumping = true
             player.velocityY = jumpForce
+            player.height = player.normalHeight
+        end
+    end
+    
+    if key == "down" or key == "lshift" or key == "rshift" then
+        if not gameOver then
+            player.wantsToSlide = true
+            if not player.isJumping then
+                player.isSliding = true
+            end
         end
     end
 
     if key == "escape" then
         love.event.quit()
+    end
+    
+    if key == "h" then
+        showHitboxes = not showHitboxes
+    end
+end
+
+function love.keyreleased(key)
+    if key == "down" or key == "lshift" or key == "rshift" then
+        player.wantsToSlide = false
+        player.isSliding = false
+        player.slideTimer = 0
+        player.height = player.normalHeight
     end
 end
 
@@ -198,9 +288,16 @@ end
 
 function checkCollision(a, b)
     local padding = a.hitboxPadding or 0
+    local topPadding = padding
+    
+    -- When sliding, reduce top hitbox by additional 3px
+    if a.isSliding then
+        topPadding = padding + 3 * dinoRunningScale
+    end
+    
     return a.x + padding < b.x + b.width - padding and
            a.x + a.width - padding > b.x + padding and
-           a.y + padding < b.y + b.height - padding and
+           a.y + topPadding < b.y + b.height - padding and
            a.y + a.height - padding > b.y + padding
 end
 
@@ -210,6 +307,10 @@ function restartGame()
     obstacles = {}
     spawnTimer = 0
     gameSpeed = 300
+    player.isSliding = false
+    player.wantsToSlide = false
+    player.slideTimer = 0
+    player.height = player.normalHeight
     player.y = ground.y - player.height + 1
     player.isJumping = false
     player.velocityY = 0
