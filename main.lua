@@ -9,7 +9,7 @@ local player = {
     wantsToSlide = false,
     slideTimer = 0,
     maxSlideTime = 3,
-    hitboxPadding = 8,
+    hitboxPadding = 9,
     animationFrame = 0,
     animationTimer = 0,
     normalHeight = 1,
@@ -41,15 +41,11 @@ function love.load()
     love.window.setTitle("Haxmas Runner :3")
     love.graphics.setDefaultFilter("nearest", "nearest")
     
-    images.dino = love.graphics.newImage("assets/dino.png")
     images.dinoSheet = love.graphics.newImage("assets/dino-sheet.png")
-    images.cactus = love.graphics.newImage("assets/cactus.png")
-    images.pterodactyl = love.graphics.newImage("assets/pterodactyl.png")
     
     local targetHeight = 80
-    dinoScale = targetHeight / images.dino:getHeight()
     
-    -- Sprite sheet is 4 frames: 2 running, 2 sliding
+    -- Sprite sheet frames: 0-1 running, 2-3 sliding, 4 jumping, 5 cactus, 6-7 pterodactyl
     -- Each frame is 22 wide x 20 tall
     dinoRunningScale = targetHeight / 20
     player.width = 22 * dinoRunningScale
@@ -61,7 +57,7 @@ function love.load()
     player.y = ground.y - player.height + 1
 
     local pterodactylTargetHeight = 70
-    pterodactylScale = pterodactylTargetHeight / images.pterodactyl:getHeight()
+    pterodactylScale = pterodactylTargetHeight / 20
     love.graphics.setFont(love.graphics.newFont(20))
 end
 
@@ -167,24 +163,39 @@ function love.draw()
     love.graphics.draw(images.dinoSheet, quad, player.x, player.y, 0, dinoRunningScale, dinoRunningScale)
 
     for _, obs in ipairs(obstacles) do
+        local frameWidth = 22
+        local frameHeight = 20
+        local frameIndex
+        
         if obs.type == "pterodactyl" then
-            local frameWidth = images.pterodactyl:getWidth() / 2
-            local quad = love.graphics.newQuad(
-                pterodactylAnimationFrame * frameWidth, 0,
-                frameWidth, images.pterodactyl:getHeight(),
-                images.pterodactyl:getDimensions()
-            )
-            love.graphics.draw(images.pterodactyl, quad, obs.x, obs.y, 0, pterodactylScale, pterodactylScale)
+            -- Pterodactyl frames 6-7
+            frameIndex = 6 + pterodactylAnimationFrame
         else
-            love.graphics.draw(images.cactus, obs.x, obs.y, 0,
-                obs.width / images.cactus:getWidth(),
-                obs.height / images.cactus:getHeight())
+            -- Cactus frame 5
+            frameIndex = 5
         end
+        
+        local quad = love.graphics.newQuad(
+            frameIndex * frameWidth, 0,
+            frameWidth, frameHeight,
+            images.dinoSheet:getDimensions()
+        )
+        
+        local scale = dinoRunningScale
+        if obs.type == "pterodactyl" then
+            scale = pterodactylScale
+        else
+            scale = obs.height / frameHeight
+        end
+        
+        love.graphics.draw(images.dinoSheet, quad, obs.x, obs.y, 0, scale, scale)
         
         -- Draw obstacle hitbox
         if showHitboxes then
             love.graphics.setColor(1, 0, 0, 0.5)
-            love.graphics.rectangle("line", obs.x, obs.y, obs.width, obs.height)
+            local hitboxX = obs.x + (obs.hitboxOffset or 0)
+            local hitboxY = obs.y + (obs.hitboxOffsetY or 0)
+            love.graphics.rectangle("line", hitboxX, hitboxY, obs.width, obs.height)
             love.graphics.setColor(1, 1, 1)
         end
     end
@@ -268,18 +279,25 @@ function spawnObstacle()
 
     if obstacleType == 1 and score > 50 then
         obstacle.type = "pterodactyl"
-        obstacle.width = (images.pterodactyl:getWidth() / 2) * pterodactylScale
-        obstacle.height = images.pterodactyl:getHeight() * pterodactylScale
+        local spriteHeight = 20 * pterodactylScale
+        obstacle.width = 22 * pterodactylScale
+        obstacle.height = 12 * pterodactylScale  -- 12px tall hitbox
+        obstacle.hitboxOffsetY = 3 * pterodactylScale  -- 3px down from top
+        obstacle.spriteHeight = spriteHeight
         local flyHeights = {
-            ground.y - obstacle.height + 1,
-            ground.y - obstacle.height - 60,
-            ground.y - obstacle.height - 120
+            ground.y - spriteHeight + 1,
+            ground.y - spriteHeight - 60,
+            ground.y - spriteHeight - 120
         }
         obstacle.y = flyHeights[math.random(1, 3)]
     else
         obstacle.type = "cactus"
-        obstacle.width = 30
-        obstacle.height = 50
+        local cactusScale = dinoRunningScale * 0.8
+        local spriteWidth = 22 * cactusScale
+        obstacle.width = 12 * dinoRunningScale
+        obstacle.height = 20 * cactusScale
+        obstacle.spriteWidth = spriteWidth
+        obstacle.hitboxOffset = (spriteWidth - obstacle.width) / 2
         obstacle.y = ground.y - obstacle.height + 1
     end
 
@@ -295,10 +313,16 @@ function checkCollision(a, b)
         topPadding = padding + 3 * dinoRunningScale
     end
     
-    return a.x + padding < b.x + b.width - padding and
-           a.x + a.width - padding > b.x + padding and
-           a.y + topPadding < b.y + b.height - padding and
-           a.y + a.height - padding > b.y + padding
+    -- Offset for centered cactus hitbox
+    local bx = b.x
+    local bOffset = b.hitboxOffset or 0
+    local by = b.y
+    local bOffsetY = b.hitboxOffsetY or 0
+    
+    return a.x + padding < bx + bOffset + b.width - padding and
+           a.x + a.width - padding > bx + bOffset + padding and
+           a.y + topPadding < by + bOffsetY + b.height - padding and
+           a.y + a.height - padding > by + bOffsetY + padding
 end
 
 function restartGame()
